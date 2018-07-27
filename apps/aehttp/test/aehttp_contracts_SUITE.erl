@@ -31,6 +31,7 @@
          environment_contract/1,
          identity_contract/1,
 	 maps_contract/1,
+	 oracles_contract/1,
          simple_storage_contract/1,
 	 spend_test_contract/1,
          null/1
@@ -64,6 +65,7 @@ groups() ->
        environment_contract,
        spend_test_contract,
        dutch_auction_contract,
+       oracles_contract,
        null                                     %This allows to end with ,
       ]}
     ].
@@ -331,19 +333,17 @@ identity_contract(Config) ->
     ensure_balance(DPubkey, 50000),
     {ok,[_]} = aecore_suite_utils:mine_key_blocks(NodeName, 1),
 
-    %% Compile contract "identity.aes"
-    ContractString = aeso_test_utils:read_contract("identity"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "identity.aes"
+    Code = compile_test_contract("identity"),
 
     %% Initialise contract, owned by Carl.
     {EncodedContractPubkey,_,_} = create_contract(NodeName, CPubkey, CPrivkey,
-						  HexCode, <<"()">>),
+						  Code, <<"()">>),
 
     %% Set up call to main which can be used by all calls.
     MainFunction = <<"main">>,
     MainArgument = <<"(42)">>,
-    {ok,EncodedMainData} = aect_sophia:encode_call_data(HexCode, MainFunction,
+    {ok,EncodedMainData} = aect_sophia:encode_call_data(Code, MainFunction,
                                                         MainArgument),
 
     %% Call contract main function by Carl.
@@ -381,17 +381,15 @@ simple_storage_contract(Config) ->
     _DBal0 = ensure_balance(DPubkey, 50000),
     {ok,[_]} = aecore_suite_utils:mine_key_blocks(NodeName, 1),
 
-    %% Compile contract "simple_storage.aes"
-    ContractString = aeso_test_utils:read_contract("simple_storage"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "simple_storage.aes"
+    Code = compile_test_contract("simple_storage"),
 
     %% Initialise contract, owned by Alice.
     {EncodedContractPubkey,_,_} = create_contract(NodeName, APubkey, APrivkey,
-						  HexCode, <<"(21)">>),
+						  Code, <<"(21)">>),
 
     %% Setup call to get which can be used by all calls to get.
-    {ok,EncodedGetData} = aect_sophia:encode_call_data(HexCode,
+    {ok,EncodedGetData} = aect_sophia:encode_call_data(Code,
 						       <<"get">>, <<"()">>),
 
     %% Call contract get function by Alice.
@@ -401,7 +399,7 @@ simple_storage_contract(Config) ->
 
     %% Call contract set function by Alice.
     ASetValue1 = call_set(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-			  HexCode, <<"(42)">>),
+			  Code, <<"(42)">>),
     ?assertEqual(ASetValue1, ?VALUE_STATEP),
 
     %% Call contract get function by Bert.
@@ -411,7 +409,7 @@ simple_storage_contract(Config) ->
 
     %% Call contract set function by Bert.
     BSetValue1 = call_set(NodeName, BPubkey, BPrivkey, EncodedContractPubkey,
-			  HexCode, <<"(84)">>),
+			  Code, <<"(84)">>),
     ?assertEqual(BSetValue1, ?VALUE_STATEP),
 
     %% Call contract get function by Carl.
@@ -421,7 +419,7 @@ simple_storage_contract(Config) ->
 
     %% Call contract set function by Carl.
     CSetValue1 = call_set(NodeName, CPubkey, CPrivkey, EncodedContractPubkey,
-			  HexCode, <<"(126)">>),
+			  Code, <<"(126)">>),
     ?assertEqual(CSetValue1, ?VALUE_STATEP),
 
     %% Call contract get function by Diana.
@@ -431,7 +429,7 @@ simple_storage_contract(Config) ->
 
     %% Call contract set function by Diana.
     DSetValue1 = call_set(NodeName, DPubkey, DPrivkey, EncodedContractPubkey,
-			  HexCode, <<"(168)">>),
+			  Code, <<"(168)">>),
     ?assertEqual(DSetValue1, ?VALUE_STATEP),
 
     %% Call contract get function by Alice.
@@ -473,21 +471,19 @@ counter_contract(Config) ->
     _ABal0 = ensure_balance(APubkey, 50000),
     _BBal0 = ensure_balance(BPubkey, 50000),
 
-    %% Compile contract "counter.aes"
-    ContractString = aeso_test_utils:read_contract("counter"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "counter.aes"
+    Code = compile_test_contract("counter"),
 
     %% Initialise contract, owned by Bert.
     {EncodedContractPubkey,_,_} = create_contract(NodeName, BPubkey, BPrivkey,
-						  HexCode, <<"(21)">>),
+						  Code, <<"(21)">>),
 
     %% Setup call to tick which can be used by all calls.
-    {ok,EncodedTickData} = aect_sophia:encode_call_data(HexCode,
-						       <<"tick">>, <<"()">>),
+    {ok,EncodedTickData} = aect_sophia:encode_call_data(Code,
+							<<"tick">>, <<"()">>),
 
     %% Setup call to get which can be used by all calls.
-    {ok,EncodedGetData} = aect_sophia:encode_call_data(HexCode,
+    {ok,EncodedGetData} = aect_sophia:encode_call_data(Code,
 						       <<"get">>, <<"()">>),
 
     %% Call contract get function by Bert.
@@ -535,39 +531,37 @@ maps_contract(Config) ->
     _DBal0 = ensure_balance(DPubkey, 500000),
     {ok,[_]} = aecore_suite_utils:mine_key_blocks(NodeName, 1),
 
-    %% Compile contract "maps.aes" but a simple test first.
-    ContractString = aeso_test_utils:read_contract("maps"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "maps.aes" but a simple test first.
+    Code = compile_test_contract("maps"),
 
     %% Initialise contract owned by Alice.
     {EncodedContractPubkey,_,_} =
-	create_contract(NodeName, APubkey, APrivkey, HexCode, <<"()">>),
+	create_contract(NodeName, APubkey, APrivkey, Code, <<"()">>),
 
     %% get_state
     ct:pal("Calling get_state\n"),
-    GetState1 = call_get_state(NodeName, BPubkey, BPrivkey,
-			       EncodedContractPubkey, HexCode),
+    GetState1 = call_get_state(NodeName, APubkey, APrivkey,
+			       EncodedContractPubkey, Code),
     ct:pal("Get state 1 ~p\n", [GetState1]),
 
     %% Set state {[k] = v}
-    call_func(NodeName, BPubkey, BPrivkey, EncodedContractPubkey, HexCode,
+    call_func(NodeName, BPubkey, BPrivkey, EncodedContractPubkey, Code,
 			      <<"map_state_i">>, <<"()">>),
-    call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, HexCode,
+    call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, Code,
 			      <<"map_state_s">>, <<"()">>),
 
     %% get_state
     ct:pal("Calling get_state\n"),
     GetState2 = call_get_state(NodeName, APubkey, APrivkey,
-			       EncodedContractPubkey, HexCode),
+			       EncodedContractPubkey, Code),
     ct:pal("Get state 2 ~p\n", [GetState2]),
 
     ok.
 
-call_get_state(NodeName, Pubkey, Privkey, EncodedContractPubkey, HexCode) ->
+call_get_state(NodeName, Pubkey, Privkey, EncodedContractPubkey, Code) ->
     StateType = <<"( map(int, (int, int)), map(string, (int, int)) )">>,
     {GSValue,_} = call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey,
-			    HexCode, <<"get_state">>, <<"()">>),
+			    Code, <<"get_state">>, <<"()">>),
     #{<<"value">> := GetState} = decode_data(StateType, GSValue),
     GetState.
 
@@ -594,69 +588,67 @@ environment_contract(Config) ->
     DBal0 = ensure_balance(DPubkey, 50000),
     {ok,[_]} = aecore_suite_utils:mine_key_blocks(NodeName, 1),
 
-    %% Compile contract "environment.aes"
-    ContractString = aeso_test_utils:read_contract("environment"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "environment.aes"
+    Code = compile_test_contract("environment"),
 
     ContractBalance = 10000,
 
     %% Initialise contract owned by Alice setting balance to 10000.
     {EncodedContractPubkey,_,_} =
 	create_contract(NodeName, APubkey, APrivkey,
-			HexCode, <<"()">>, #{amount => ContractBalance}),
+			Code, <<"()">>, #{amount => ContractBalance}),
 
     ABal1 = get_balance(APubkey),
 
     %% Address.
     ct:pal("Calling contract_address\n"),
-    call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey, HexCode,
+    call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey, Code,
 	      <<"contract_address">>, <<"()">>),
     %% ct:pal("Calling nested_address\n"),
-    %% call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey, HexCode,
+    %% call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey, Code,
     %% 	      <<"nested_address">>,
     %% 	      list_to_binary([$(,aect_utils:hex_bytes(BPubkey),$)])),
 
     %% Balance.
     ct:pal("Calling contract_balance\n"),
     {CBValue,_} = call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-			    HexCode, <<"contract_balance">>, <<"()">>),
+			    Code, <<"contract_balance">>, <<"()">>),
     #{<<"value">> := ContractBalance} = decode_data(<<"int">>, CBValue),
 
     %% Origin.
     ct:pal("Calling call_origin\n"),
     call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-	      HexCode, <<"call_origin">>, <<"()">>),
+	      Code, <<"call_origin">>, <<"()">>),
 
     %% ct:pal("Calling nested_origin\n"),
     %% NestedOrigin = call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-    %% 			     HexCode, <<"nested_origin">>, <<"()">>),
+    %% 			     Code, <<"nested_origin">>, <<"()">>),
 
     %% Caller.
     ct:pal("Calling call_caller\n"),
     call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-	      HexCode, <<"call_caller">>, <<"()">>),
+	      Code, <<"call_caller">>, <<"()">>),
     ct:pal("Calling nested_caller\n"),
     call_func(NodeName, APubkey, APrivkey, EncodedContractPubkey,
-	      HexCode, <<"nested_caller">>, <<"()">>),
+	      Code, <<"nested_caller">>, <<"()">>),
 
     %% Value.
     ct:pal("Calling call_value\n"),
     {CVValue,_} = call_func(NodeName, BPubkey, BPrivkey,
 			    EncodedContractPubkey,
-			    HexCode, <<"call_value">>, <<"()">>),
+			    Code, <<"call_value">>, <<"()">>),
     #{<<"value">> := CallValue} = decode_data(<<"int">>, CVValue),
     ct:pal("Call value ~p\n", [CallValue]),
     %% ct:pal("Calling nested_value\n"),
     %% NestedValue = call_func(NodeName, BPubkey, BPrivkey, EncodedContractPubkey,
-    %% 			    HexCode, <<"nested_value">>, <<"(42)">>),
+    %% 			    Code, <<"nested_value">>, <<"(42)">>),
     %% ct:pal("Nested value ~p\n", [NestedValue]),
 
     %% Gas price.
     ct:pal("Calling call_gas_price\n"),
     {GPValue,_} = call_func(NodeName, BPubkey, BPrivkey,
 			    EncodedContractPubkey,
-			    HexCode, <<"call_gas_price">>, <<"()">>),
+			    Code, <<"call_gas_price">>, <<"()">>),
     #{<<"value">> := GasPrice} = decode_data(<<"int">>, GPValue),
     ct:pal("Gas price ~p\n", [GasPrice]),
 
@@ -664,14 +656,14 @@ environment_contract(Config) ->
     ct:pal("Calling get_balance twice\n"),
     {BBalValue,_} = call_func(NodeName, BPubkey, BPrivkey,
 			      EncodedContractPubkey,
-			      HexCode, <<"get_balance">>,
+			      Code, <<"get_balance">>,
 			      args_to_binary([BPubkey])),
     #{<<"value">> := BBalance} = decode_data(<<"int">>, BBalValue),
     ct:pal("Balance B ~p\n", [BBalance]),
 
     {DBalValue,_} = call_func(NodeName, BPubkey, BPrivkey,
 			      EncodedContractPubkey,
-			      HexCode, <<"get_balance">>,
+			      Code, <<"get_balance">>,
 			      args_to_binary([DPubkey])),
     #{<<"value">> := DBalance} = decode_data(<<"int">>, DBalValue),
     ct:pal("Balance D ~p\n", [DBalance]),
@@ -680,25 +672,25 @@ environment_contract(Config) ->
     ct:pal("Calling block_hash\n"),
     {BHValue,_} = call_func(NodeName, CPubkey, CPrivkey,
 			    EncodedContractPubkey,
-			    HexCode, <<"block_hash">>, <<"(21)">>),
+			    Code, <<"block_hash">>, <<"(21)">>),
     #{<<"value">> := BlockHash} = decode_data(<<"int">>, BHValue),
     ct:pal("Block hash ~p\n", [BlockHash]),
 
     %% Coinbase.
     %% ct:pal("Calling coinbase\n"),
-    %% call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, HexCode,
+    %% call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, Code,
     %% 	      <<"coinbase">>, <<"()">>),
 
     %% Block timestamp.
     %% ct:pal("Calling timestamp\n"),
-    %% call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, HexCode,
+    %% call_func(NodeName, CPubkey, CPrivkey, EncodedContractPubkey, Code,
     %% 	      <<"timestamp">>, <<"()">>),
 
     %% Block height.
     ct:pal("Calling block_height\n"),
     {HeightValue,_} = call_func(NodeName, DPubkey, DPrivkey,
 				EncodedContractPubkey,
-				HexCode, <<"block_height">>, <<"()">>),
+				Code, <<"block_height">>, <<"()">>),
     #{<<"value">> := BlockHeight} = decode_data(<<"int">>, HeightValue),
     ct:pal("Block height ~p\n", [BlockHeight]),
 
@@ -706,14 +698,14 @@ environment_contract(Config) ->
     ct:pal("Calling difficulty\n"),
     {DiffValue,_} = call_func(NodeName, DPubkey, DPrivkey,
 			      EncodedContractPubkey,
-			      HexCode, <<"difficulty">>, <<"()">>),
+			      Code, <<"difficulty">>, <<"()">>),
     #{<<"value">> := Difficulty} = decode_data(<<"int">>, DiffValue),
     ct:pal("Difficulty ~p\n", [Difficulty]),
 
     %% Gas limit.
     ct:pal("Calling gas_limit\n"),
     {GLValue,_} = call_func(NodeName, DPubkey, DPrivkey, EncodedContractPubkey,
-			    HexCode, <<"gas_limit">>, <<"()">>),
+			    Code, <<"gas_limit">>, <<"()">>),
     #{<<"value">> := GasLimit} = decode_data(<<"int">>, GLValue),
     ct:pal("Gas limit ~p\n", [GasLimit]),
 
@@ -739,17 +731,15 @@ spend_test_contract(Config) ->
     ok = wait_for_tx_hash_on_chain(NodeName, ATxHash),
     ok = wait_for_tx_hash_on_chain(NodeName, BTxHash),
 
-    %% Compile contract "spend_test.aes"
-    ContractString = aeso_test_utils:read_contract("spend_test"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "spend_test.aes"
+    Code = compile_test_contract("spend_test"),
 
     %% Initialise contracts owned by Alice with balance set to 10000 and 20000.
     {EncodedC1Pubkey,DecodedC1Pubkey,_} =
-	create_contract(NodeName, APubkey, APrivkey, HexCode,
+	create_contract(NodeName, APubkey, APrivkey, Code,
 			<<"()">>, #{amount => 10000}),
     {EncodedC2Pubkey,DecodedC2Pubkey,_} =
-	create_contract(NodeName, APubkey, APrivkey, HexCode,
+	create_contract(NodeName, APubkey, APrivkey, Code,
 			<<"()">>, #{amount => 20000}),
 
     aecore_suite_utils:mine_key_blocks(NodeName, 3),
@@ -757,16 +747,16 @@ spend_test_contract(Config) ->
     %% Alice does all the operations on the contract and spends on Bert.
     %% Check the contract balances.
     {GB1Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC1Pubkey,
-			     HexCode, <<"get_balance">>, <<"()">>),
+			     Code, <<"get_balance">>, <<"()">>),
     #{<<"value">> := 10000} = decode_data(<<"int">>, GB1Value),
     {GB2Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC2Pubkey,
-			     HexCode, <<"get_balance">>, <<"()">>),
+			     Code, <<"get_balance">>, <<"()">>),
     #{<<"value">> := 20000} = decode_data(<<"int">>, GB2Value),
 
     %% Spend 15000 on to Bert.
     Sp1Arg = args_to_binary([BPubkey,15000]),
     {Sp1Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC2Pubkey,
-			     HexCode, <<"spend">>, Sp1Arg),
+			     Code, <<"spend">>, Sp1Arg),
     #{<<"value">> := 5000} = decode_data(<<"int">>, Sp1Value),
 
     aecore_suite_utils:mine_key_blocks(NodeName, 3),
@@ -774,19 +764,19 @@ spend_test_contract(Config) ->
     %% Check that contract spent it.
     GBO1Arg = args_to_binary([DecodedC2Pubkey]),
     {GBO1Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC1Pubkey,
-			      HexCode, <<"get_balance_of">>, GBO1Arg),
+			      Code, <<"get_balance_of">>, GBO1Arg),
     #{<<"value">> := 5000} = decode_data(<<"int">>, GBO1Value),
 
     %% Check that Bert got it.
     GBO2Arg = args_to_binary([BPubkey]),
     {GBO2Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC1Pubkey,
-			      HexCode, <<"get_balance_of">>, GBO2Arg),
+			      Code, <<"get_balance_of">>, GBO2Arg),
     #{<<"value">> := 2015000} = decode_data(<<"int">>, GBO2Value),
 
     %% Spend 6000 explicitly from contract 1 to Bert.
     SF1Arg = args_to_binary([DecodedC1Pubkey,BPubkey,6000]),
     {SF1Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC2Pubkey,
-			     HexCode, <<"spend_from">>, SF1Arg),
+			     Code, <<"spend_from">>, SF1Arg),
     #{<<"value">> := 2021000} = decode_data(<<"int">>, SF1Value),
 
     aecore_suite_utils:mine_key_blocks(NodeName, 3),
@@ -794,13 +784,13 @@ spend_test_contract(Config) ->
     %% Check that Bert got it.
     GBO3Arg = args_to_binary([BPubkey]),
     {GBO3Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC1Pubkey,
-			      HexCode, <<"get_balance_of">>, GBO3Arg),
+			      Code, <<"get_balance_of">>, GBO3Arg),
     #{<<"value">> := 2021000} = decode_data(<<"int">>, GBO3Value),
 
     %% Check contract 2 balance.
     GBO4Arg = args_to_binary([DecodedC2Pubkey]),
     {GBO4Value,_} = call_func(NodeName, APubkey, APrivkey, EncodedC1Pubkey,
-			      HexCode, <<"get_balance_of">>, GBO4Arg),
+			      Code, <<"get_balance_of">>, GBO4Arg),
     #{<<"value">> := 5000} = decode_data(<<"int">>, GBO4Value),
 
     ok.
@@ -826,10 +816,8 @@ dutch_auction_contract(Config) ->
     _CBal0 = ensure_balance(CPubkey, 500000),
     {ok,[_]} = aecore_suite_utils:mine_key_blocks(NodeName, 1),
 
-    %% Compile contract "dutch_auction.aes"
-    ContractString = aeso_test_utils:read_contract("dutch_auction"),
-    BinCode = aeso_compiler:from_string(ContractString, []),
-    HexCode = aeu_hex:hexstring_encode(BinCode),
+    %% Compile test contract "dutch_auction.aes"
+    Code = compile_test_contract("dutch_auction"),
 
     %% Set auction start amount and decrease per mine and fee.
     StartAmt = 50000,
@@ -839,7 +827,7 @@ dutch_auction_contract(Config) ->
     %% Initialise contract owned by Alice with Carl as benficiary.
     InitArgument = args_to_binary([CPubkey,StartAmt,Decrease]),
     {EncodedContractPubkey,_,InitReturn} =
-	create_contract(NodeName, APubkey, APrivkey, HexCode, InitArgument),
+	create_contract(NodeName, APubkey, APrivkey, Code, InitArgument),
     #{<<"height">> := Height0} = InitReturn,
 
     %% Mine 10 times to decrement value.
@@ -851,7 +839,7 @@ dutch_auction_contract(Config) ->
 
     %% Call the contract bid function by Bert.
     {_,BidReturn} = call_func(NodeName, BPubkey, BPrivkey,
-			      EncodedContractPubkey, HexCode,
+			      EncodedContractPubkey, Code,
 			      <<"bid">>, <<"()">>,
 			      #{amount => 100000,fee => Fee}),
     #{<<"gas_used">> := GasUsed,<<"height">> := Height1} = BidReturn,
@@ -870,6 +858,12 @@ dutch_auction_contract(Config) ->
     BBal2 = BBal1 - Cost - GasUsed - Fee,
     CBal2 = CBal1 + Cost,
 
+    ok.
+
+%% oracles_contract(Config)
+%%  Test the Oracles contract.
+
+oracles_contract(_Config) ->
     ok.
 
 get_balance(Pubkey) ->
@@ -897,18 +891,27 @@ decode_data(Type, EncodedData) ->
 
 %% Contract interface functions.
 
-%% create_contract(NodeName, Pubkey, Privkey, HexCode, InitArgument) ->
+%% compile_test_contract(FileName) -> Code.
+%%  Compile a *test* contract file.
+
+compile_test_contract(ContractFile) ->
+    ContractString = aeso_test_utils:read_contract(ContractFile),
+    SophiaCode = list_to_binary(ContractString),
+    {ok, 200, #{<<"bytecode">> := Code}} = get_contract_bytecode(SophiaCode),
+    Code.
+
+%% create_contract(NodeName, Pubkey, Privkey, Code, InitArgument) ->
 %%     {EncodedContractPubkey,DecodedContractPubkey,InitReturn}.
 %%  Create contract and mine blocks until in chain.
 
-create_contract(NodeName, Pubkey, Privkey, HexCode, InitArgument) ->
-    create_contract(NodeName, Pubkey, Privkey, HexCode, InitArgument, #{}).
+create_contract(NodeName, Pubkey, Privkey, Code, InitArgument) ->
+    create_contract(NodeName, Pubkey, Privkey, Code, InitArgument, #{}).
 
-create_contract(NodeName, Pubkey, Privkey, HexCode, InitArgument, CallerSet) ->
-    {ok,EncodedInitData} = aect_sophia:encode_call_data(HexCode, <<"init">>,
+create_contract(NodeName, Pubkey, Privkey, Code, InitArgument, CallerSet) ->
+    {ok,EncodedInitData} = aect_sophia:encode_call_data(Code, <<"init">>,
                                                         InitArgument),
     {ContractCreateTxHash,EncodedContractPubkey,DecodedContractPubkey} =
-        contract_create_tx(Pubkey, Privkey, HexCode, EncodedInitData, CallerSet),
+        contract_create_tx(Pubkey, Privkey, Code, EncodedInitData, CallerSet),
 
     %% Mine blocks and check that it is in the chain.
     ok = wait_for_tx_hash_on_chain(NodeName, ContractCreateTxHash),
@@ -929,15 +932,15 @@ create_contract(NodeName, Pubkey, Privkey, HexCode, InitArgument, CallerSet) ->
 %%              CallerSet)
 %%  Call contract function with arguments and mine blocks until in chain.
 
-call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, HexCode,
+call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, Code,
 	  Function, Arguments) ->
-    call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, HexCode,
+    call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, Code,
 	      Function, Arguments, #{}).
 
-call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, HexCode,
+call_func(NodeName, Pubkey, Privkey, EncodedContractPubkey, Code,
 	  Function, Arguments, CallerSet) ->
     %% Call function contract.
-    {ok,EncodedCallData} = aect_sophia:encode_call_data(HexCode,
+    {ok,EncodedCallData} = aect_sophia:encode_call_data(Code,
 							Function, Arguments),
     call_encoded(NodeName, Pubkey, Privkey, EncodedContractPubkey,
 		 EncodedCallData, CallerSet).
@@ -963,10 +966,10 @@ call_encoded(NodeName, Pubkey, Privkey, EncodedContractPubkey, EncodedData,
     #{<<"return_type">> := <<"ok">>,<<"return_value">> := Value} = CallReturn,
     {Value,CallReturn}.
 
-%% contract_create_tx(Pubkey, Privkey, HexCode, EncodedInitData) ->
-%%     contract_create_tx(Pubkey, Privkey, HexCode, EncodedInitData, #{}).
+%% contract_create_tx(Pubkey, Privkey, Code, EncodedInitData) ->
+%%     contract_create_tx(Pubkey, Privkey, Code, EncodedInitData, #{}).
 
-contract_create_tx(Pubkey, Privkey, HexCode, EncodedInitData, CallerSet) ->
+contract_create_tx(Pubkey, Privkey, Code, EncodedInitData, CallerSet) ->
     Address = aec_base58c:encode(account_pubkey, Pubkey),
     %% Generate a nonce.
     {ok,200,#{<<"nonce">> := Nonce0}} = get_nonce(Address),
@@ -974,7 +977,7 @@ contract_create_tx(Pubkey, Privkey, HexCode, EncodedInitData, CallerSet) ->
 
     %% The default init contract.
     ContractInitEncoded0 = #{ owner => Address,
-			      code => HexCode,
+			      code => Code,
 			      vm_version => 1,	%?AEVM_01_Sophia_01
 			      deposit => 2,
 			      amount => 0,	%Initial balance
@@ -1028,6 +1031,11 @@ get_top() ->
 get_contract_create(Data) ->
     Host = external_address(),
     http_request(Host, post, "tx/contract/create", Data).
+
+get_contract_bytecode(SourceCode) ->
+    Host = external_address(),
+    http_request(Host, post, "contract/compile", #{ <<"code">> => SourceCode,
+						    <<"options">> => <<>> }).
 
 get_contract_call(Data) ->
     Host = external_address(),
