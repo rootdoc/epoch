@@ -6,6 +6,7 @@ It:
 * Adds http API interface `/tx/contract/create/compute` for creating contracts.
 * Fixes a bug in internal DB storage of micro forks.
 * Caps the gas operand of the `CALL` opcode in the VM with the available machine gas before performing the inner call. This impacts consensus.
+* Fine-tune oracle Sophia builtins and related VM primops (remove fee argument from `Oracle.register` Sophia builtin; remove fee argument from `Oracle.extend` Sophia builtin; remove fee argument from oracle extend VM primop). This impacts consensus.
 
 [this-release]: https://github.com/aeternity/epoch/releases/tag/v0.20.0
 
