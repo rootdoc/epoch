@@ -35,13 +35,15 @@
 -type vsn() :: non_neg_integer().
 
 -record(channel_force_progress_tx, {
-          channel_id :: aec_id:id(),
-          from       :: aec_id:id(),
-          payload    :: binary(),
-          poi        :: aec_trees:poi(),
-          ttl        :: aetx:tx_ttl(),
-          fee        :: non_neg_integer(),
-          nonce      :: non_neg_integer()
+          channel_id    :: aec_id:id(),
+          from          :: aec_id:id(),
+          payload       :: binary(),
+          solo_payload  :: binary(),
+          addresses     :: [aec_id:id()],
+          poi           :: aec_trees:poi(),
+          ttl           :: aetx:tx_ttl(),
+          fee           :: non_neg_integer(),
+          nonce         :: non_neg_integer()
          }).
 
 -opaque tx() :: #channel_force_progress_tx{}.
@@ -53,21 +55,32 @@
 %%%===================================================================
 
 -spec new(map()) -> {ok, aetx:tx()}.
-new(#{channel_id := ChannelId,
-      from       := From,
-      payload    := Payload,
-      poi        := PoI,
-      fee        := Fee,
-      nonce      := Nonce} = Args) ->
+new(#{channel_id    := ChannelId,
+      from          := From,
+      payload       := Payload,
+      solo_payload  := SoloPayload,
+      addresses     := Addresses,
+      poi           := PoI,
+      fee           := Fee,
+      nonce         := Nonce} = Args) ->
     channel = aec_id:specialize_type(ChannelId),
     account = aec_id:specialize_type(From),
+    true =
+        lists:all(
+            fun(Id) ->
+                T = aec_id:specialize_type(Id),
+                T =:= account orelse T =:= contract
+            end,
+            Addresses),
     Tx = #channel_force_progress_tx{
-            channel_id = ChannelId,
-            from       = From,
-            payload    = Payload,
-            poi        = PoI,
-            ttl        = maps:get(ttl, Args, 0),
-            fee        = Fee,
+            channel_id    = ChannelId,
+            from          = From,
+            payload       = Payload,
+            solo_payload  = SoloPayload,
+            addresses     = Addresses,
+            poi           = PoI,
+            ttl           = maps:get(ttl, Args, 0),
+            fee           = Fee,
             nonce      = Nonce},
     {ok, aetx:new(?MODULE, Tx)}.
 
@@ -104,21 +117,26 @@ from_pubkey(#channel_force_progress_tx{from = FromPubKey}) ->
 
 -spec check(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
         {ok, aec_trees:trees()} | {error, term()}.
-check(#channel_force_progress_tx{payload    = Payload,
-                             poi        = PoI,
-                             fee        = Fee,
-                             nonce      = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
+check(#channel_force_progress_tx{payload      = Payload,
+                                 solo_payload = SoloPayload,
+                                 addresses    = Addresses,
+                                 poi          = PoI,
+                                 fee          = Fee,
+                                 nonce        = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
-    aesc_utils:check_solo_close_payload(ChannelId, FromPubKey, Nonce, Fee,
-                                        Payload, PoI, Height, Trees).
+    aesc_utils:check_force_progress(ChannelId, FromPubKey, Nonce, Fee,
+                                   Payload, SoloPayload, Addresses,
+                                   PoI, Height, Trees).
 
 -spec process(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
         {ok, aec_trees:trees()}.
-process(#channel_force_progress_tx{payload    = Payload,
-                               poi        = PoI,
-                               fee        = Fee,
-                               nonce      = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
+process(#channel_force_progress_tx{payload      = Payload,
+                                   solo_payload = _SoloPayload,
+                                   addresses    = _Addresses,
+                                   poi          = PoI,
+                                   fee          = Fee,
+                                   nonce        = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
     aesc_utils:process_solo_close(ChannelId, FromPubKey, Nonce, Fee,
@@ -129,66 +147,80 @@ signers(#channel_force_progress_tx{} = Tx, _) ->
     {ok, [from_pubkey(Tx)]}.
 
 -spec serialize(tx()) -> {vsn(), list()}.
-serialize(#channel_force_progress_tx{channel_id = ChannelId,
-                                 from       = FromId,
-                                 payload    = Payload,
-                                 poi        = PoI,
-                                 ttl        = TTL,
-                                 fee        = Fee,
-                                 nonce      = Nonce}) ->
+serialize(#channel_force_progress_tx{channel_id   = ChannelId,
+                                     from         = FromId,
+                                     payload      = Payload,
+                                     solo_payload = SoloPayload,
+                                     addresses    = Addresses,
+                                     poi          = PoI,
+                                     ttl          = TTL,
+                                     fee          = Fee,
+                                     nonce        = Nonce}) ->
     {version(),
-     [ {channel_id, ChannelId}
-     , {from      , FromId}
-     , {payload   , Payload}
-     , {poi       , aec_trees:serialize_poi(PoI)}
-     , {ttl       , TTL}
-     , {fee       , Fee}
-     , {nonce     , Nonce}
+     [ {channel_id    , ChannelId}
+     , {from          , FromId}
+     , {payload       , Payload}
+     , {solo_payload  , SoloPayload}
+     , {addresses     , Addresses}
+     , {poi           , aec_trees:serialize_poi(PoI)}
+     , {ttl           , TTL}
+     , {fee           , Fee}
+     , {nonce         , Nonce}
      ]}.
 
 -spec deserialize(vsn(), list()) -> tx().
 deserialize(?CHANNEL_FORCE_PROGRESS_TX_VSN,
-            [ {channel_id, ChannelId}
-            , {from      , FromId}
-            , {payload   , Payload}
-            , {poi       , PoI}
-            , {ttl       , TTL}
-            , {fee       , Fee}
-            , {nonce     , Nonce}]) ->
+            [ {channel_id   , ChannelId}
+            , {from         , FromId}
+            , {payload      , Payload}
+            , {solo_payload , SoloPayload}
+            , {address      , Addresses}
+            , {poi          , PoI}
+            , {ttl          , TTL}
+            , {fee          , Fee}
+            , {nonce        , Nonce}]) ->
     channel = aec_id:specialize_type(ChannelId),
     account = aec_id:specialize_type(FromId),
-    #channel_force_progress_tx{channel_id = ChannelId,
-                           from       = FromId,
-                           payload    = Payload,
-                           poi        = aec_trees:deserialize_poi(PoI),
-                           ttl        = TTL,
-                           fee        = Fee,
-                           nonce      = Nonce}.
+    #channel_force_progress_tx{channel_id   = ChannelId,
+                               from         = FromId,
+                               payload      = Payload,
+                               solo_payload = SoloPayload,
+                               addresses    = Addresses,
+                               poi          = aec_trees:deserialize_poi(PoI),
+                               ttl          = TTL,
+                               fee          = Fee,
+                               nonce        = Nonce}.
 
 -spec for_client(tx()) -> map().
-for_client(#channel_force_progress_tx{payload    = Payload,
-                                  poi        = PoI,
-                                  ttl        = TTL,
-                                  fee        = Fee,
-                                  nonce      = Nonce} = Tx) ->
+for_client(#channel_force_progress_tx{payload       = Payload,
+                                      solo_payload  = SoloPayload,
+                                      addresses     = Addresses,
+                                      poi           = PoI,
+                                      ttl           = TTL,
+                                      fee           = Fee,
+                                      nonce         = Nonce} = Tx) ->
     #{<<"data_schema">> => <<"ChannelForceProgressTxJSON">>, % swagger schema name
-      <<"vsn">>         => version(),
-      <<"channel_id">>  => aec_base58c:encode(id_hash, channel(Tx)),
-      <<"from">>        => aec_base58c:encode(id_hash, from(Tx)),
-      <<"payload">>     => Payload,
-      <<"poi">>         => aec_base58c:encode(poi, aec_trees:serialize_poi(PoI)),
-      <<"ttl">>         => TTL,
-      <<"fee">>         => Fee,
-      <<"nonce">>       => Nonce}.
+      <<"vsn">>           => version(),
+      <<"channel_id">>    => aec_base58c:encode(id_hash, channel(Tx)),
+      <<"from">>          => aec_base58c:encode(id_hash, from(Tx)),
+      <<"payload">>       => Payload,
+      <<"solo_payload">>  => SoloPayload,
+      <<"addresses">>     => [aec_base58c:encode(id_hash, Id) || Id <- Addresses],
+      <<"poi">>           => aec_base58c:encode(poi, aec_trees:serialize_poi(PoI)),
+      <<"ttl">>           => TTL,
+      <<"fee">>           => Fee,
+      <<"nonce">>         => Nonce}.
 
 serialization_template(?CHANNEL_FORCE_PROGRESS_TX_VSN) ->
-    [ {channel_id, id}
-    , {from      , id}
-    , {payload   , binary}
-    , {poi       , binary}
-    , {ttl       , int}
-    , {fee       , int}
-    , {nonce     , int}
+    [ {channel_id     , id}
+    , {from           , id}
+    , {payload        , binary}
+    , {solo_payload   , binary}
+    , {addresses      , [binary]}
+    , {poi            , binary}
+    , {ttl            , int}
+    , {fee            , int}
+    , {nonce          , int}
     ].
 
 %%%===================================================================

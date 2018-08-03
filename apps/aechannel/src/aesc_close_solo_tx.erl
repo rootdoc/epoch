@@ -107,11 +107,14 @@ from_pubkey(#channel_close_solo_tx{from = FromPubKey}) ->
 check(#channel_close_solo_tx{payload    = Payload,
                              poi        = PoI,
                              fee        = Fee,
-                             nonce      = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
+                             nonce      = Nonce} = Tx, _Context, Trees, _Height, _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
-    aesc_utils:check_solo_close_payload(ChannelId, FromPubKey, Nonce, Fee,
-                                        Payload, PoI, Height, Trees).
+    case aesc_utils:check_solo_close_payload(ChannelId, FromPubKey, Nonce, Fee,
+                                        Payload, PoI, Trees) of
+        ok -> {ok, Trees};
+        Err -> Err
+    end.
 
 -spec process(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
         {ok, aec_trees:trees()}.

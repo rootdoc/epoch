@@ -32,7 +32,8 @@
 -export([is_call/1,
          is_contract_create/1,
          extract_call/1,
-         extract_caller/1]).
+         extract_caller/1,
+         extract_contract_id/1]).
 
 -spec op_transfer(aec_id:id(), aec_id:id(), non_neg_integer()) -> update().
 op_transfer(From, To, Amount) ->
@@ -296,4 +297,14 @@ extract_call(Update) ->
             {contract_pubkey(ContractId), account_pubkey(CallerId)};
         _ -> not_call
     end.
+
+-spec is_call(update()) -> boolean().
+is_call({?OP_CALL_CONTRACT, _, _, _, _, _, _}) ->
+    true;
+is_call(_) ->
+    false.
+
+-spec extract_contract_id(update()) -> aect_contracts:id().
+extract_contract_id({?OP_CALL_CONTRACT, _, Contract, _, _, _, _}) ->
+    contract_pubkey(Contract).
 

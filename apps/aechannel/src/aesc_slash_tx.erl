@@ -110,9 +110,11 @@ check(#channel_slash_tx{payload    = Payload,
                         nonce      = Nonce} = Tx, _Context, Trees, Height,  _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
-    aesc_utils:check_slash_payload(ChannelId, FromPubKey, Nonce, Fee,
-                                   Payload, PoI, Height, Trees).
-
+    case aesc_utils:check_slash_payload(ChannelId, FromPubKey, Nonce, Fee,
+                                   Payload, PoI, Height, Trees) of
+        ok -> {ok, Trees};
+        Err -> Err
+    end.
 
 -spec process(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
         {ok, aec_trees:trees()}.

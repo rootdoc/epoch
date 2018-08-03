@@ -15,11 +15,13 @@
          check_round_greater_than_last/2,
          check_state_hash_size/1,
          deserialize_payload/1,
-         check_solo_close_payload/8,
+         check_solo_close_payload/7,
          check_slash_payload/8,
-         check_solo_snapshot_payload/7,
+         check_solo_snapshot_payload/6,
+         check_force_progress/10,
          process_solo_close/8,
          process_slash/8,
+         process_force_progress/10,
          process_solo_snapshot/6
         ]).
 
@@ -114,92 +116,136 @@ deserialize_payload(Payload) ->
 %%%===================================================================
 
 check_solo_close_payload(ChannelId, FromPubKey, Nonce, Fee, Payload,
-                         PoI, Height, Trees) ->
-    Checks =
-        [fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce, Fee) end,
-         fun() ->
-                 check_payload(ChannelId, FromPubKey, Payload, PoI,
-                               Height, Trees, solo_close)
-         end],
-    case aeu_validation:run(Checks) of
-        ok ->
-            {ok, Trees};
-        {error, _Reason} = Error ->
-            Error
+                         PoI, Trees) ->
+    case get_vals([get_channel(ChannelId, Trees),
+                   deserialize_payload(Payload)]) of
+        {error, _} = E -> E;
+        {ok, [Channel, last_onchain]} ->
+            Checks =
+                [fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce, Fee) end,
+                 fun() -> check_is_active(Channel) end,
+                 fun() -> check_root_hash_in_channel(Channel, PoI) end,
+                 fun() -> check_peers_and_amounts_in_poi(Channel, PoI) end
+                ],
+            aeu_validation:run(Checks);
+        {ok, [Channel, {SignedState, PayloadTx}]} ->
+            ChannelId = aesc_channels:id(Channel),
+            Checks =
+                [ fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce,
+                                                    Fee) end,
+                  fun() -> check_is_active(Channel) end,
+                  fun() -> check_payload(Channel, PayloadTx, FromPubKey, SignedState,
+                                          Trees, solo_close) end,
+                  fun() -> check_poi(Channel, PayloadTx, PoI) end
+                ],
+            aeu_validation:run(Checks)
     end.
 
 check_slash_payload(ChannelId, FromPubKey, Nonce, Fee, Payload,
                     PoI, Height, Trees) ->
-    Checks =
-        [fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce, Fee) end,
-         fun() ->
-                 check_payload(ChannelId, FromPubKey, Payload, PoI,
-                               Height, Trees, slash)
-         end],
-    case aeu_validation:run(Checks) of
-        ok ->
-            {ok, Trees};
-        {error, _Reason} = Error ->
-            Error
+    case get_vals([get_channel(ChannelId, Trees),
+                   deserialize_payload(Payload)]) of
+        %% TODO: gas costs
+        {error, _} = E -> E;
+        {ok, [_Channel, last_onchain]} ->
+            {error, slash_must_have_payload};
+        {ok, [Channel, {SignedState, PayloadTx}]} ->
+            ChannelId = aesc_channels:id(Channel),
+            Checks =
+                [ fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce,
+                                                    Fee) end,
+                  fun() -> check_is_closing(Channel, Height) end,
+                  fun() -> check_payload(Channel, PayloadTx, FromPubKey, SignedState,
+                                          Trees, slash) end,
+                  fun() -> check_poi(Channel, PayloadTx, PoI) end
+                ],
+            aeu_validation:run(Checks)
+    end.
+
+check_force_progress(ChannelId, FromPubKey, Nonce, Fee, 
+                     Payload, SoloPayload, Addresses,
+                     PoI, _Height, Trees) ->
+    case get_vals([get_channel(ChannelId, Trees),
+                   deserialize_payload(Payload),
+                   deserialize_payload(SoloPayload)]) of
+        {error, _} = E -> E;
+        {ok, [_Channel, last_onchain, _]} ->
+            %TODO: use last on-chain state
+            {error, force_progrsss_must_have_payload};
+        {ok, [_Channel, _, last_onchain]} ->
+            {error, force_progrsss_must_have_payload};
+        {ok, [Channel, {SignedState, PayloadTx},
+                       {SoloSignedState, SoloPayloadTx}]} ->
+            ChannelId = aesc_channels:id(Channel),
+            Checks =
+                [ fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce,
+                                                    Fee) end,
+                  fun() -> check_payload(Channel, PayloadTx, FromPubKey, SignedState,
+                                          Trees, force_progress) end,
+                  fun() -> check_solo_signed_payload(Channel, SoloPayloadTx,
+                                                     FromPubKey, SoloSignedState,
+                                          Trees, force_progress) end,
+                  fun() ->
+                      R0 = aesc_offchain_tx:round(PayloadTx),
+                      R1 = aesc_offchain_tx:round(SoloPayloadTx),
+                      case R0 =:= R1 + 1 of
+                          true -> ok;
+                          false -> {error, wrong_round}
+                      end
+                  end,
+                  fun() -> validate_addresses(Addresses, PoI, Channel) end,
+                  fun() -> check_poi(Channel, PayloadTx, PoI) end,
+                  fun() -> check_call_and_caller(PayloadTx, FromPubKey,
+                                                 Addresses) end
+                ],
+            aeu_validation:run(Checks)
     end.
 
 check_solo_snapshot_payload(ChannelId, FromPubKey, Nonce, Fee, Payload,
-                            Height, Trees) ->
-    Checks =
-        [fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce, Fee) end,
-         fun() ->
-                 check_payload(ChannelId, FromPubKey, Payload, no_poi,
-                               Height, Trees, solo_snapshot)
-         end],
-    case aeu_validation:run(Checks) of
-        ok ->
-            {ok, Trees};
-        {error, _Reason} = Error ->
-            Error
+                            Trees) ->
+    case get_vals([aesc_utils:get_channel(ChannelId, Trees),
+                   aesc_utils:deserialize_payload(Payload)]) of
+        {error, _} = E -> E;
+        {ok, [_Channel, last_onchain]} ->
+            {error, snapshot_must_have_payload};
+        {ok, [Channel, {SignedState, PayloadTx}]} ->
+            ChannelId = aesc_channels:id(Channel),
+            Checks =
+                [ fun() -> aetx_utils:check_account(FromPubKey, Trees, Nonce,
+                                                    Fee) end,
+                  fun() -> check_is_active(Channel) end,
+                  fun() -> check_payload(Channel, PayloadTx, FromPubKey, SignedState,
+                                          Trees, solo_snapshot) end
+                ],
+            aeu_validation:run(Checks)
     end.
 
-check_payload(ChannelId, FromPubKey, Payload, PoI, Height, Trees, Type) ->
-    case aesc_utils:get_channel(ChannelId, Trees) of
-        {error, _} = E -> E;
-        {ok, Channel} ->
-            case aesc_utils:deserialize_payload(Payload) of
-                {ok, last_onchain} when Type =:= slash ->
-                    {error, slash_must_have_payload};
-                {ok, last_onchain} when Type =:= solo_close ->
-                    Checks =
-                        [fun() -> check_is_active(Channel) end,
-                         fun() -> check_root_hash_in_channel(Channel, PoI) end,
-                         fun() -> check_peers_and_amounts_in_poi(Channel, PoI) end
-                        ],
-                    aeu_validation:run(Checks);
-                {ok, SignedState, PayloadTx} ->
-                    ActiveChecks =
-                        case Type of
-                            solo_close    -> [fun() -> check_is_active(Channel) end];
-                            slash         -> [fun() -> check_is_closing(Channel, Height) end];
-                            solo_snapshot -> [fun() -> check_is_active(Channel) end]
-                        end,
-                    PayloadChecks =
-                        [fun() -> check_channel_id_in_payload(Channel, PayloadTx) end,
-                         fun() -> check_round_in_payload(Channel, PayloadTx) end,
-                         fun() -> is_peer_or_delegate(ChannelId, FromPubKey, SignedState, Trees, Type) end,
-                         fun() -> aetx_sign:verify(SignedState, Trees) end
-                        ],
-                    PoIChecks =
-                        [fun() -> check_root_hash_in_payload(PayloadTx, PoI) end,
-                         fun() -> check_peers_and_amounts_in_poi(Channel, PoI) end
-                        ],
-                    Checks =
-                        case Type of
-                            T when T =:= solo_close orelse T =:= slash ->
-                                ActiveChecks ++ PayloadChecks ++ PoIChecks;
-                            solo_snapshot -> ActiveChecks ++ PayloadChecks %no poi
-                        end,
-                    aeu_validation:run(Checks);
-                {error, _Reason} = Error ->
-                    Error
-            end
-    end.
+check_poi(Channel, PayloadTx, PoI) ->
+    Checks =
+        [fun() -> check_root_hash_in_payload(PayloadTx, PoI) end,
+         fun() -> check_peers_and_amounts_in_poi(Channel, PoI) end
+        ],
+    aeu_validation:run(Checks).
+
+check_payload(Channel, PayloadTx, FromPubKey, SignedState, Trees, Type) ->
+    ChannelId = aesc_channels:id(Channel),
+    Checks =
+        [fun() -> check_channel_id_in_payload(Channel, PayloadTx) end,
+          fun() -> check_round_in_payload(Channel, PayloadTx) end,
+          fun() -> is_peer_or_delegate(ChannelId, FromPubKey, SignedState, Trees, Type) end,
+          fun() -> aetx_sign:verify(SignedState, Trees) end
+        ],
+    aeu_validation:run(Checks).
+
+check_solo_signed_payload(Channel, PayloadTx, FromPubKey, SignedState, Trees, Type) ->
+    ChannelId = aesc_channels:id(Channel),
+    Checks =
+        [fun() -> check_channel_id_in_payload(Channel, PayloadTx) end,
+          fun() -> check_round_in_payload(Channel, PayloadTx) end,
+          fun() -> is_peer_or_delegate(ChannelId, FromPubKey, SignedState, Trees, Type) end,
+          fun() -> aetx_sign:verify_incomplete(SignedState, [FromPubKey]) end
+        ],
+    aeu_validation:run(Checks).
 
 check_peers_and_amounts_in_poi(Channel, PoI) ->
     InitiatorPubKey   = aesc_channels:initiator(Channel),
@@ -342,8 +388,114 @@ process_solo_close_slash(ChannelId, FromPubKey, Nonce, Fee,
                 aesc_channels:close_solo(Channel0, PoI, Height)
         end,
     ChannelsTree1 = aesc_state_tree:enter(Channel1, ChannelsTree0),
-
     Trees1 = aec_trees:set_accounts(Trees, AccountsTree1),
     Trees2 = aec_trees:set_channels(Trees1, ChannelsTree1),
     {ok, Trees2}.
+
+process_force_progress(ChannelId, FromPubKey, Nonce, Fee, 
+                       Payload, SoloPayload, Addresses,
+                       PoI, _Height, Trees) ->
+    %% TODO: gas costs
+    {ok, [Channel, {SignedState, PayloadTx},
+                   {SoloSignedState, SoloPayloadTx}]} =
+          get_vals([get_channel(ChannelId, Trees),
+                   deserialize_payload(Payload),
+                   deserialize_payload(SoloPayload)]),
+    [Update] = aesc_offchain_tx:updates(SoloSignedState),
+    UpdateFrom = aesc_offchain_update:extract_caller(Update),
+    ContractPubkey = aesc_offchain_update:extract_contract_id(Update),
+    {ok, Contract} = aec_trees:lookup_poi(contracts, ContractPubkey, PoI),
+    Owner = aect_contracts:owner(Contract),
+    Code = aect_contracts:code(Contract),
+    Trees.
+
+
+get_vals(List) ->
+    R = 
+        lists:foldl(
+            fun(_, {error, _} = Err) -> Err;
+              ({error, _} = Err, _) -> Err;
+              ({ok, Val}, Accum) -> [Val | Accum];
+              ({ok, Val1, Val2}, Accum) -> [{Val1, Val2} | Accum]
+            end,
+            [],
+            List),
+    case R of
+        {error, _} = Err -> Err;
+        L when is_list(L) -> {ok, lists:reverse(L)}
+    end.
+
+validate_addresses(Addresses, PoI, Channel) ->
+    GetAccount =
+        fun(AddressID) ->
+            {Tag,  Pubkey} = aec_id:specialize(AddressID),
+            case aec_trees:lookup_poi(accounts, Pubkey, PoI) of
+                {error, _} -> {error, not_found};
+                {ok, Account} -> {ok, {Tag, Account}}
+            end
+        end,
+    case get_vals([GetAccount(ID) || ID <- Addresses]) of
+        {error, not_found} = Err -> Err;
+        {ok, AccountsMixed} ->
+            Pred = fun(Tag) -> fun({Tag1, _}) -> Tag =:= Tag1 end end,
+            Accounts = lists:filter(Pred(account), AccountsMixed),
+            Contracts = lists:filter(Pred(contract), AccountsMixed),
+            Checks = [
+                fun() -> check_amounts_do_not_exceed_total_balance(Accounts,
+                                                                   Contracts,
+                                                                   Channel)
+                end,
+                fun() ->
+                    ContractKeys = [aec_accounts:pubkey(Acc) || Acc <- Contracts],
+                    check_contracts_in_poi(ContractKeys, PoI)
+                end],
+            aeu_validation:run(Checks)
+    end.
+
+check_amounts_do_not_exceed_total_balance(Accounts, Contracts, Channel) ->
+    AllBalances = lists:sum(
+                    [aec_accounts:balance(Acc) || Acc <- Accounts ++ Contracts]),
+    case AllBalances > aesc_channels:total_amount(Channel) of
+        true -> {error, poi_amounts_change_channel_funds};
+        false -> ok
+    end.
+
+check_contracts_in_poi(Pubkeys, PoI) ->
+    AllPresent =
+        lists:all(
+            fun(Pubkey) ->
+                case aec_trees:lookup_poi(contracts, Pubkey, PoI) of
+                    {ok, _} -> true;
+                    {error, _} -> false
+                end
+            end,
+            Pubkeys),
+    case AllPresent of
+        true -> ok;
+        false -> {error, contract_missing_in_poi}
+    end.
+
+check_call_and_caller(SoloSignedState, FromPubKey, Addresses) ->
+    case aesc_offchain_tx:updates(SoloSignedState) of
+        [Update] ->
+            case aesc_offchain_update:is_call(Update) of
+                true ->
+                    UpdateFrom = aesc_offchain_update:extract_caller(Update),
+                    ContractPubkey = aesc_offchain_update:extract_contract_id(Update),
+                    ContractId = aec_id:create(contract, ContractPubkey),
+                    ContractProvided = lists:member(ContractId, Addresses),
+                    case {UpdateFrom, ContractProvided} of
+                        {FromPubKey, true} -> %% same as poster
+                            ok;
+                        {_, true} -> %% some other caller?
+                            {error, not_caller};
+                        {_, false} ->
+                            {error, contract_missing}
+                    end;
+                false ->
+                    {error, update_not_call}
+            end;
+        _ ->
+            {error, more_than_one_update}
+    end.
 
