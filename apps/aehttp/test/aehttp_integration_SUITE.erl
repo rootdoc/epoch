@@ -614,7 +614,7 @@ groups() ->
         wrong_http_method_list_oracle_queries,
         wrong_http_method_peers
      ]},
-     {naming, [sequence],
+     {naming, [sequence, {repeat_until_any_fail, forever}],
       [naming_system_manage_name
       ]},
      {websocket, [sequence],
