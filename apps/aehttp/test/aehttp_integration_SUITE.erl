@@ -3577,16 +3577,16 @@ naming_system_manage_name(_Config) ->
 
     %% Get commitment hash to preclaim a name
     {ok, 200, #{<<"commitment">> := EncodedCHash}} = get_commitment_hash(Name, NameSalt),
-    {ok, CHash} = aec_base58c:safe_decode(commitment, EncodedCHash),
+    ?assertMatch({ok, _}, aec_base58c:safe_decode(commitment, EncodedCHash)),
 
     %% Submit name preclaim tx and check it is in mempool
-    {ok, 200, _}                   = post_name_preclaim_tx(CHash, Fee),
-    {ok, [PreclaimTx0]}            = rpc(aec_tx_pool, peek, [infinity]),
-    {name_preclaim_tx, PreclaimTx} = aetx:specialize_type(aetx_sign:tx(PreclaimTx0)),
-    CHash                          = aens_preclaim_tx:commitment_hash(PreclaimTx),
+    {ok, 200, #{<<"tx">> := EncodedUnsignedPreclaimTx}} = get_name_preclaim(#{<<"commitment">> := EncodedCHash, fee := Fee}),
+    PreclaimTxHash = sign_and_post_tx(EncodedUnsignedPreclaimTx),
+    {ok, 200, #{<<"tx">> := PreclaimTx}} = get_transactions_by_hash_sut(PreclaimTxHash),
+    ?assertEqual(EncodedCHash, maps:get(<<"commitment">>, PreclaimTx)),
 
-    %% Mine a block and check mempool empty again
-    aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 3),
+    %% Mine enough blocks and check mempool empty again
+    aecore_suite_utils:mine_blocks_until(aecore_suite_utils:node_name(?NODE), fun() -> tx_in_chain(PreclaimTxHash) end, 10),
     {ok, []} = rpc(aec_tx_pool, peek, [infinity]),
 
     %% Check fee taken from account, then mine reward and fee added to account
