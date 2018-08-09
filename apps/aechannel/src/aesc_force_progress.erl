@@ -41,6 +41,7 @@
           solo_payload  :: binary(),
           addresses     :: [aec_id:id()],
           poi           :: aec_trees:poi(),
+          new_poi       :: aec_trees:poi(),
           ttl           :: aetx:tx_ttl(),
           fee           :: non_neg_integer(),
           nonce         :: non_neg_integer()
@@ -61,6 +62,7 @@ new(#{channel_id    := ChannelId,
       solo_payload  := SoloPayload,
       addresses     := Addresses,
       poi           := PoI,
+      new_poi       := NewPoI,
       fee           := Fee,
       nonce         := Nonce} = Args) ->
     channel = aec_id:specialize_type(ChannelId),
@@ -79,6 +81,7 @@ new(#{channel_id    := ChannelId,
             solo_payload  = SoloPayload,
             addresses     = Addresses,
             poi           = PoI,
+            new_poi       = NewPoI,
             ttl           = maps:get(ttl, Args, 0),
             fee           = Fee,
             nonce      = Nonce},
@@ -121,26 +124,32 @@ check(#channel_force_progress_tx{payload      = Payload,
                                  solo_payload = SoloPayload,
                                  addresses    = Addresses,
                                  poi          = PoI,
+                                 new_poi      = NewPoI,
                                  fee          = Fee,
                                  nonce        = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
-    aesc_utils:check_force_progress(ChannelId, FromPubKey, Nonce, Fee,
+    case aesc_utils:check_force_progress(ChannelId, FromPubKey, Nonce, Fee,
                                    Payload, SoloPayload, Addresses,
-                                   PoI, Height, Trees).
+                                   PoI, NewPoI, Height, Trees) of
+        ok -> {ok, Trees};
+        Err -> Err
+    end.
 
 -spec process(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
         {ok, aec_trees:trees()}.
 process(#channel_force_progress_tx{payload      = Payload,
-                                   solo_payload = _SoloPayload,
-                                   addresses    = _Addresses,
+                                   solo_payload = SoloPayload,
+                                   addresses    = Addresses,
                                    poi          = PoI,
+                                   new_poi      = NewPoI,
                                    fee          = Fee,
                                    nonce        = Nonce} = Tx, _Context, Trees, Height, _ConsensusVersion) ->
     ChannelId  = channel_hash(Tx),
     FromPubKey = from_pubkey(Tx),
-    aesc_utils:process_solo_close(ChannelId, FromPubKey, Nonce, Fee,
-                                  Payload, PoI, Height, Trees).
+    aesc_utils:process_force_progress(ChannelId, FromPubKey, Nonce, Fee,
+                                      Payload, SoloPayload, Addresses,
+                                      PoI, NewPoI, Height, Trees).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, list(aec_keys:pubkey())}.
 signers(#channel_force_progress_tx{} = Tx, _) ->
@@ -153,6 +162,7 @@ serialize(#channel_force_progress_tx{channel_id   = ChannelId,
                                      solo_payload = SoloPayload,
                                      addresses    = Addresses,
                                      poi          = PoI,
+                                     new_poi      = NewPoI,
                                      ttl          = TTL,
                                      fee          = Fee,
                                      nonce        = Nonce}) ->
@@ -163,6 +173,7 @@ serialize(#channel_force_progress_tx{channel_id   = ChannelId,
      , {solo_payload  , SoloPayload}
      , {addresses     , Addresses}
      , {poi           , aec_trees:serialize_poi(PoI)}
+     , {new_poi       , aec_trees:serialize_poi(NewPoI)}
      , {ttl           , TTL}
      , {fee           , Fee}
      , {nonce         , Nonce}
@@ -176,6 +187,7 @@ deserialize(?CHANNEL_FORCE_PROGRESS_TX_VSN,
             , {solo_payload , SoloPayload}
             , {address      , Addresses}
             , {poi          , PoI}
+            , {new_poi      , NewPoI}
             , {ttl          , TTL}
             , {fee          , Fee}
             , {nonce        , Nonce}]) ->
@@ -187,6 +199,7 @@ deserialize(?CHANNEL_FORCE_PROGRESS_TX_VSN,
                                solo_payload = SoloPayload,
                                addresses    = Addresses,
                                poi          = aec_trees:deserialize_poi(PoI),
+                               new_poi      = aec_trees:deserialize_poi(NewPoI),
                                ttl          = TTL,
                                fee          = Fee,
                                nonce        = Nonce}.
@@ -196,6 +209,7 @@ for_client(#channel_force_progress_tx{payload       = Payload,
                                       solo_payload  = SoloPayload,
                                       addresses     = Addresses,
                                       poi           = PoI,
+                                      new_poi       = NewPoI,
                                       ttl           = TTL,
                                       fee           = Fee,
                                       nonce         = Nonce} = Tx) ->
@@ -207,6 +221,7 @@ for_client(#channel_force_progress_tx{payload       = Payload,
       <<"solo_payload">>  => SoloPayload,
       <<"addresses">>     => [aec_base58c:encode(id_hash, Id) || Id <- Addresses],
       <<"poi">>           => aec_base58c:encode(poi, aec_trees:serialize_poi(PoI)),
+      <<"new_poi">>       => aec_base58c:encode(poi, aec_trees:serialize_poi(NewPoI)),
       <<"ttl">>           => TTL,
       <<"fee">>           => Fee,
       <<"nonce">>         => Nonce}.
@@ -216,8 +231,9 @@ serialization_template(?CHANNEL_FORCE_PROGRESS_TX_VSN) ->
     , {from           , id}
     , {payload        , binary}
     , {solo_payload   , binary}
-    , {addresses      , [binary]}
+    , {addresses      , [id]}
     , {poi            , binary}
+    , {new_poi        , binary}
     , {ttl            , int}
     , {fee            , int}
     , {nonce          , int}

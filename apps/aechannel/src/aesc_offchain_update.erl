@@ -65,37 +65,41 @@ op_call_contract(CallerId, ContractId, VmVersion, Amount, CallData, CallStack) -
     contract = aec_id:specialize_type(ContractId),
     {?OP_CALL_CONTRACT, CallerId, ContractId, VmVersion, Amount, CallData, CallStack}.
 
--spec apply_on_trees(update(), aec_trees:trees(), non_neg_integer(), map()) -> aec_trees:trees().
-apply_on_trees({?OP_TRANSFER, FromId, ToId, Amount}, Trees0, _, Opts) ->
-    From = account_pubkey(FromId),
-    To = account_pubkey(ToId),
-    Trees1 = remove_tokens(From, Amount, Trees0, Opts),
-    add_tokens(To, Amount, Trees1);
-apply_on_trees({?OP_DEPOSIT, ToId, Amount}, Trees, _, _Opts) ->
-    To = account_pubkey(ToId),
-    add_tokens(To, Amount, Trees);
-apply_on_trees({?OP_WITHDRAW, FromId, Amount}, Trees, _, Opts) ->
-    From = account_pubkey(FromId),
-    remove_tokens(From, Amount, Trees, Opts);
-apply_on_trees({?OP_CREATE_CONTRACT, OwnerId, VmVersion, Code, Deposit, CallData}, Trees, Round, Opts) ->
-    Owner = account_pubkey(OwnerId),
-    {ContractPubKey, _Contract, Trees1} =
-        aect_channel_contract:new(Owner, Round, VmVersion, Code, Deposit, Trees),
-    Trees2 = remove_tokens(Owner, Deposit, Trees1, Opts),
-    Trees3 = create_account(ContractPubKey, Trees2),
-    Trees4 = add_tokens(ContractPubKey, Deposit, Trees3),
-    Call = aect_call:new(Owner, Round, ContractPubKey, Round, 0),
-    _Trees = aect_channel_contract:run_new(ContractPubKey, Call, CallData,
-                                           Round, Trees4);
-apply_on_trees({?OP_CALL_CONTRACT, CallerId, ContractId, VmVersion, Amount, CallData, CallStack},
-             Trees, Round, Opts) ->
-    Caller = account_pubkey(CallerId),
-    ContractPubKey = contract_pubkey(ContractId),
-    Trees1 = remove_tokens(Caller, Amount, Trees, Opts),
-    Trees2 = add_tokens(ContractPubKey, Amount, Trees1),
-    Call = aect_call:new(Caller, Round, ContractPubKey, Round, 0),
-    _Trees = aect_channel_contract:run(ContractPubKey, VmVersion, Call,
-                                       CallData, CallStack, Round, Trees2).
+-spec apply_on_trees(aesc_offchain_update:update(), aec_trees:trees(), non_neg_integer(),
+                     non_neg_integer()) -> aec_trees:trees().
+apply_on_trees(Update, Trees0, Round, Reserve) ->
+    case Update of
+        {?OP_TRANSFER, FromId, ToId, Amount} ->
+            From = account_pubkey(FromId),
+            To = account_pubkey(ToId),
+            Trees = remove_tokens(From, Amount, Trees0, Reserve),
+            add_tokens(To, Amount, Trees);
+        {?OP_DEPOSIT, ToId, Amount} ->
+            To = account_pubkey(ToId),
+            add_tokens(To, Amount, Trees0);
+        {?OP_WITHDRAW, FromId, Amount} ->
+            From = account_pubkey(FromId),
+            remove_tokens(From, Amount, Trees0, Reserve);
+        {?OP_CREATE_CONTRACT, OwnerId, VmVersion, Code, Deposit, CallData} ->
+            Owner = account_pubkey(OwnerId),
+            {ContractPubKey, _Contract, Trees1} =
+                aect_channel_contract:new(Owner, Round, VmVersion, Code,
+                                          Deposit, Trees0),
+            Trees2 = remove_tokens(Owner, Deposit, Trees1, Reserve),
+            Trees3 = create_account(ContractPubKey, Trees2),
+            Trees4 = add_tokens(ContractPubKey, Deposit, Trees3),
+            Call = aect_call:new(Owner, Round, ContractPubKey, Round, 0),
+            _Trees = aect_channel_contract:run_new(ContractPubKey, Call, CallData,
+                                                  Round, Trees4);
+        {?OP_CALL_CONTRACT, CallerId, ContractId, VmVersion, Amount, CallData, CallStack} ->
+            Caller = account_pubkey(CallerId),
+            ContractPubKey = contract_pubkey(ContractId),
+            Trees1 = remove_tokens(Caller, Amount, Trees0, Reserve),
+            Trees2 = add_tokens(ContractPubKey, Amount, Trees1),
+            Call = aect_call:new(Caller, Round, ContractPubKey, Round, 0),
+            _Trees = aect_channel_contract:run(ContractPubKey, VmVersion, Call,
+                                              CallData, CallStack, Round, Trees2)
+    end.
 
 -spec for_client(update()) -> map().
 for_client({?OP_TRANSFER, From, To, Amount}) ->
@@ -232,8 +236,7 @@ update_serialization_template(?UPDATE_VSN, ?OP_CALL_CONTRACT) ->
       {call_data,   binary},
       {call_stack,  [int]}].
 
-check_min_amt(Amt, Opts) ->
-    Reserve = maps:get(channel_reserve, Opts, 0),
+check_min_amt(Amt, Reserve) ->
     if Amt < Reserve ->
             erlang:error(insufficient_balance);
        true ->
@@ -255,11 +258,11 @@ add_tokens(Pubkey, Amount, Trees) ->
     AccountTrees1 = aec_accounts_trees:enter(Acc, AccountTrees),
     aec_trees:set_accounts(Trees, AccountTrees1).
 
-remove_tokens(Pubkey, Amount, Trees, Opts) ->
+remove_tokens(Pubkey, Amount, Trees, Reserve) ->
     AccountTrees = aec_trees:accounts(Trees),
     Acc0 = aec_accounts_trees:get(Pubkey, AccountTrees),
     Balance = aec_accounts:balance(Acc0),
-    check_min_amt(Balance - Amount, Opts),
+    check_min_amt(Balance - Amount, Reserve),
     Nonce = aec_accounts:nonce(Acc0),
     {ok, Acc} = aec_accounts:spend(Acc0, Amount, Nonce), %no nonce bump
     AccountTrees1 = aec_accounts_trees:enter(Acc, AccountTrees),
@@ -297,12 +300,6 @@ extract_call(Update) ->
             {contract_pubkey(ContractId), account_pubkey(CallerId)};
         _ -> not_call
     end.
-
--spec is_call(update()) -> boolean().
-is_call({?OP_CALL_CONTRACT, _, _, _, _, _, _}) ->
-    true;
-is_call(_) ->
-    false.
 
 -spec extract_contract_id(update()) -> aect_contracts:id().
 extract_contract_id({?OP_CALL_CONTRACT, _, Contract, _, _, _, _}) ->

@@ -20,7 +20,8 @@
          deposit/1,
          withdraw/1,
          settle/1,
-         snapshot_solo/1]).
+         snapshot_solo/1,
+         force_progress/1]).
 
 % negative create
 -export([create_missing_account/1,
@@ -119,6 +120,7 @@
 -define(MINER_PUBKEY, <<12345:?MINER_PUB_BYTES/unit:8>>).
 -define(BOGUS_CHANNEL, <<0:?MINER_PUB_BYTES/unit:8>>).
 -define(ROLES, [initiator, responder]).
+-define(VM_VERSION, 1).
 %%%===================================================================
 %%% Common test framework
 %%%===================================================================
@@ -146,7 +148,8 @@ groups() ->
        settle,
        {group, settle_negative},
        snapshot_solo,
-       {group, snapshot_solo_negative}]
+       {group, snapshot_solo_negative},
+       force_progress]
      },
      {create_negative, [sequence],
       [create_missing_account,
@@ -370,7 +373,7 @@ close_solo(Cfg) ->
                [positive(fun create_channel_/2),
                 set_from(Closer),
                 set_prop(payload, <<>>),
-                calc_poi(IStartAmt, RStartAmt),
+                calc_poi_by_balances(IStartAmt, RStartAmt),
                 positive(fun close_solo_/2),
                 fun(#{channel_id := ChannelId, state := S} = Props) ->
                     % make sure the channel is not active any more
@@ -390,7 +393,7 @@ close_solo(Cfg) ->
                [positive(fun create_channel_/2),
                 set_from(Depositor),
                 set_prop(amount, Amount),
-                calc_poi(IStartAmt + Amount, RStartAmt),
+                calc_poi_by_balances(IStartAmt + Amount, RStartAmt),
                 % calc poi so balances match the expectations
                 fun(#{poi := PoI} = Props) ->
                     PoIHash = aec_trees:poi_hash(PoI),
@@ -417,7 +420,7 @@ close_solo(Cfg) ->
                [positive(fun create_channel_/2),
                 set_from(Withdrawer),
                 set_prop(amount, Amount),
-                calc_poi(IStartAmt - Amount, RStartAmt),
+                calc_poi_by_balances(IStartAmt - Amount, RStartAmt),
                 % calc poi so balances match the expectations
                 fun(#{poi := PoI} = Props) ->
                     PoIHash = aec_trees:poi_hash(PoI),
@@ -438,11 +441,27 @@ close_solo(Cfg) ->
                                                        Closer <- ?ROLES],
     ok.
 
-calc_poi(IB, RB) ->
+calc_poi_by_balances(IB, RB) ->
     fun(#{initiator_pubkey := I, responder_pubkey := R} = Props) ->
         PoI = aesc_test_utils:proof_of_inclusion([{I, IB},{R, RB}]),
         Props#{poi => PoI}
     end.
+
+calc_poi(Accounts, Contracts, _Calls, Trees) ->
+    AddPoI =
+        fun(Key, InitPoI, Pubkeys) ->
+            lists:foldl(
+                fun(Pubkey, AccumPoI) ->
+                    {ok, P} = aec_trees:add_poi(Key, Pubkey, Trees,
+                                                AccumPoI),
+                    P
+                end,
+                InitPoI,
+                Pubkeys)
+        end,
+    PoI0 = AddPoI(accounts, aec_trees:new_poi(Trees), Accounts ++ Contracts),
+    PoI  = AddPoI(contracts, PoI0, Contracts),
+    PoI.
 
 close_solo_unknown_from(Cfg) ->
     {MissingAccount, S} = aesc_test_utils:setup_new_account(aesc_test_utils:new_state()),
@@ -1413,6 +1432,65 @@ snapshot_delegate_not_allowed(Cfg) ->
     test_delegate_not_allowed(Cfg, fun snapshot_solo_/2).
 
 %%%===================================================================
+%%% Force progress
+%%%===================================================================
+
+force_progress(Cfg) ->
+    Round = 43,
+    NextRound = Round + 1,
+    Test =
+        fun(Owner, Forcer) ->
+            run(#{cfg => Cfg, initiator_amount => 30,
+                              responder_amount => 30,
+                 channel_reserve => 1},
+               [positive(fun create_channel_/2),
+                set_prop(round, Round),
+                set_from(Owner, owner, owner_privkey),
+                create_trees(),
+                create_contract_in_trees(_Round    = 10,
+                                         _Contract = "identity",
+                                         _InitArgs = <<"()">>,
+                                         _Deposit  = 2),
+                fun(#{initiator_pubkey := Initiator,
+                      responder_pubkey := Responder,
+                      contract_id      := ContractId,
+                      trees            := Trees} = Props) ->
+                    PoI = calc_poi([Initiator, Responder],
+                                   [ContractId], [], Trees),
+                    PoIHash = aec_trees:poi_hash(PoI),
+                    Props#{state_hash => PoIHash, poi => PoI,
+                           new_poi => PoI, %%TODO: proper new poi
+                           addresses => [aec_id:create(account, Initiator),
+                                         aec_id:create(account, Responder),
+                                         aec_id:create(contract, ContractId)
+                                        ]}
+                end,
+                create_payload(),
+                set_from(Forcer),
+                set_prop(round, NextRound),
+                fun(#{contract_id := ContractId} = Props) ->
+                    (create_contract_call_payload(ContractId, <<>>, 1))(Props)
+                end,
+                set_prop(fee, 1),
+                positive(fun force_progress_/2),
+                fun(#{channel_id := ChannelId, state := S,
+                      solo_payload := SoloPayload} = Props) ->
+                    % ensure channel had been updated
+                    Channel = aesc_test_utils:get_channel(ChannelId, S),
+                    NextRound = aesc_channels:round(Channel),
+                    {channel_offchain_tx, SoloPayloadTx} = aetx:specialize_type(
+                        aetx_sign:tx(aetx_sign:deserialize_from_binary(SoloPayload))),
+                    ExpectedStateHash = aesc_offchain_tx:state_hash(SoloPayloadTx),
+                    ExpectedStateHash = aesc_channels:state_hash(Channel),
+                    Props
+                end
+                ])
+        end,
+    [Test(Owner, Forcer) || Owner  <- ?ROLES,
+                            Forcer <- ?ROLES],
+    ok.
+
+%%%===================================================================
 %%% Test utils
 %%%===================================================================
 
@@ -1427,6 +1505,9 @@ negative(Fun, ErrMsg) ->
     fun(Props) -> Fun(Props, {negative, ErrMsg}) end.
 
 set_from(Role) ->
+    set_from(Role, from, from_privkey).
+
+set_from(Role, PubkeyKey, PrivkeyKey) ->
     fun(Props) ->
         {KeyPub, KeyPriv} =
             case Role of
@@ -1435,7 +1516,7 @@ set_from(Role) ->
             end,
         PubKey = maps:get(KeyPub, Props),
         PrivKey = maps:get(KeyPriv, Props),
-        Props#{from => PubKey, from_privkey => PrivKey}
+        Props#{PubkeyKey => PubKey, PrivkeyKey => PrivKey}
     end.
 
 set_prop(Key, Value) ->
@@ -1473,11 +1554,70 @@ create_payload(Key) ->
           responder_pubkey  := RPubkey,
           initiator_privkey := IPrivkey,
           responder_privkey := RPrivkey} = Props) ->
-        PayloadSpec = #{initiator_amount => IAmt,
-                        responder_amount => RAmt},
+        PayloadSpec0 = #{initiator_amount => IAmt,
+                        responder_amount => RAmt,
+                        round => maps:get(round, Props, 11)},
+        PayloadSpec =
+            case maps:get(state_hash, Props, none) of
+                none -> PayloadSpec0;
+                V -> PayloadSpec0#{state_hash => V}
+            end,
         Payload = aesc_test_utils:payload(ChannelId, IPubkey, RPubkey,
                                         [IPrivkey, RPrivkey], PayloadSpec),
         Props#{Key => Payload}
+    end.
+
+create_contract_call_payload(ContractId, CallData, Amount) ->
+    create_contract_call_payload(solo_payload, ContractId, CallData, Amount).
+
+create_contract_call_payload(Key, ContractId, CallData, Amount) ->
+    fun(#{channel_id        := ChannelId,
+          from              := From,
+          from_privkey      := FromPrivkey,
+          round             := Round,
+          trees             := Trees} = Props) ->
+        Update = aesc_offchain_update:op_call_contract(aec_id:create(account, From),
+                                                       aec_id:create(contract, ContractId),
+                                                       ?VM_VERSION, Amount, CallData,
+                                                       []),
+        StateHash = aec_trees:hash(Trees),
+        {ok, UnsignedP} = aesc_offchain_tx:new(#{channel_id => aec_id:create(channel, ChannelId),
+                                                 updates => [Update],
+                                                 state_hash => StateHash,
+                                                 round => Round}),
+        Payload = aetx_sign:serialize_to_binary(
+                    aec_test_utils:sign_tx(UnsignedP, [FromPrivkey])),
+        Props#{Key => Payload}
+    end.
+
+create_trees() ->
+    fun(#{initiator_amount  := IAmt,
+          responder_amount  := RAmt,
+          initiator_pubkey  := IPubkey,
+          responder_pubkey  := RPubkey} = Props) ->
+        Accounts = [aec_accounts:new(Pubkey, Balance) ||
+                {Pubkey, Balance} <- [{IPubkey, IAmt},
+                                      {RPubkey, RAmt}]],
+        Trees = aec_test_utils:create_state_tree_with_accounts(Accounts, no_backend),
+        Props#{trees => Trees}
+    end.
+
+create_contract_in_trees(CreationRound, ContractName, InitArg, Deposit) ->
+    fun(#{trees := Trees0,
+          owner := Owner} = Props) ->
+        ContractString = aeso_test_utils:read_contract(ContractName),
+        BinCode = aeso_compiler:from_string(ContractString, []),
+        CallData = aect_sophia:create_call(BinCode, <<"init">>, InitArg),
+        Update = aesc_offchain_update:op_new_contract(aec_id:create(account, Owner),
+                                                      ?VM_VERSION,
+                                                      BinCode,
+                                                      Deposit,
+                                                      CallData),
+        Reserve = maps:get(channel_reserve, Props, 0),
+        Trees = aesc_offchain_update:apply_on_trees(Update, Trees0, CreationRound,
+                                                    Reserve),
+        ContractId = aect_contracts:compute_contract_pubkey(Owner, CreationRound),
+        Props#{trees => Trees, contract_id => ContractId}
     end.
 
 run(Cfg, Funs) ->
@@ -1682,6 +1822,28 @@ close_mutual_(#{channel_id              := ChannelId,
       {ok, Tx} = aesc_close_mutual_tx:new(TxSpec),
       SignedTx = aec_test_utils:sign_tx(Tx, [PrivKey1, PrivKey2]),
       apply_on_trees_(Props, SignedTx, S, Expected).
+
+force_progress_(#{channel_id        := ChannelId,
+                  from              := From,
+                  from_privkey      := FromPrivkey,
+                  fee               := Fee,
+                  state             := S,
+                  payload           := Payload,
+                  solo_payload      := SoloPayload,
+                  addresses         := Addresses,
+                  poi               := PoI,
+                  new_poi           := NewPoI,
+                  initiator_privkey := _IPrivkey,
+                  responder_privkey := _RPrivkey} = Props, Expected) ->
+
+    ForceProTxSpec = aesc_test_utils:force_progress_tx_spec(ChannelId, From,
+                                                            Payload, SoloPayload, PoI,
+                                                            NewPoI, Addresses,
+                                                            #{fee => Fee}, S),
+    {ok, ForceProTx} = aesc_force_progress:new(ForceProTxSpec),
+
+    SignedTx = aec_test_utils:sign_tx(ForceProTx, [FromPrivkey]),
+    apply_on_trees_(Props, SignedTx, S, Expected).
 
 snapshot_solo_(#{ channel_id        := ChannelId,
                   from              := From,

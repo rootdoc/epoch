@@ -48,7 +48,11 @@
          settle_tx_spec/4,
 
          snapshot_solo_tx_spec/4,
-         snapshot_solo_tx_spec/5]).
+         snapshot_solo_tx_spec/5,
+
+         force_progress_tx_spec/8,
+         force_progress_tx_spec/9
+        ]).
 
 -define(BOGUS_STATE_HASH, <<42:32/unit:8>>).
 
@@ -406,4 +410,29 @@ proof_of_inclusion(Participants) ->
         end,
         aec_trees:new_poi(Trees),
         Participants).
+
+%%%===================================================================
+%%% Force progress
+%%%===================================================================
+
+force_progress_tx_spec(ChannelId, FromPubKey, Payload, SoloPayload, PoI,
+                       NewPoI, Addresses, State) ->
+    force_progress_tx_spec(ChannelId, FromPubKey, Payload, SoloPayload, PoI,
+                           NewPoI, Addresses, #{}, State).
+
+force_progress_tx_spec(ChannelId, FromPubKey, Payload, SoloPayload, PoI,
+                       NewPoI, Addresses, Spec0, State) ->
+    Spec = maps:merge(force_progress_default_spec(FromPubKey, State), Spec0),
+    Spec#{channel_id  => aec_id:create(channel, ChannelId),
+          from        => aec_id:create(account, FromPubKey),
+          payload     => Payload,
+          solo_payload=> SoloPayload,
+          addresses   => Addresses,
+          poi         => PoI,
+          new_poi     => NewPoI,
+          ttl         => maps:get(ttl, Spec, 0)}.
+
+force_progress_default_spec(FromPubKey, State) ->
+    #{fee              => 3,
+      nonce            => try next_nonce(FromPubKey, State) catch _:_ -> 0 end}.
 
