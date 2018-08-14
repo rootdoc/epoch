@@ -995,15 +995,12 @@ handle_request('DecodeData', Req, _Context) ->
 
 handle_request('GetTx', Req, _Context) ->
     ParseFuns = [read_required_params([tx_hash]),
-                 read_optional_params([{tx_encoding, tx_encoding, message_pack}]),
-                 parse_tx_encoding(tx_encoding),
                  base58_decode([{tx_hash, tx_hash, tx_hash}]),
                  get_transaction(tx_hash, tx),
                  encode_transaction(tx, tx_encoding, encoded_tx),
                  ok_response(
-                    fun(#{encoded_tx := #{tx := Tx, schema := Schema}}) ->
-                        #{transaction => Tx,
-                          data_schema => Schema}
+                    fun(#{encoded_tx := #{tx := Tx}}) ->
+                        #{transaction => Tx}
                     end)
                 ],
     process_request(ParseFuns, Req);

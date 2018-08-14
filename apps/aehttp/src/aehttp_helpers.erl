@@ -455,14 +455,7 @@ encode_transaction(TxKey, TxEncodingKey, EncodedTxKey) ->
     fun(_Req, State) ->
         #{tx := Tx,
           tx_block_hash := BlockHash} = maps:get(TxKey, State),
-        TxEncoding = maps:get(TxEncodingKey, State),
-        DataSchema =
-            case TxEncoding of
-                json ->
-                    <<"SingleTxJSON">>;
-                message_pack ->
-                    <<"SingleTxMsgPack">>
-            end,
+        TxEncoding = json,
         T =
             case BlockHash of
                 mempool ->
@@ -471,7 +464,7 @@ encode_transaction(TxKey, TxEncodingKey, EncodedTxKey) ->
                     {ok, H} = aec_chain:get_header(BlockHash),
                     aetx_sign:serialize_for_client(TxEncoding, H, Tx)
             end,
-        {ok, maps:put(EncodedTxKey, #{tx => T, schema => DataSchema}, State)}
+        {ok, maps:put(EncodedTxKey, #{tx => T}, State)}
     end.
 
 -spec read_tx_encoding_param(map()) -> {ok, json | message_pack} |

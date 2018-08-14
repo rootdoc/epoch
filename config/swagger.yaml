@@ -928,17 +928,16 @@ paths:
           description: Hash of the transaction to get
           required: true
           type: string
-        - in: query
-          name: tx_encoding
-          description: 'Transaction encoding'
-          type: string
-          enum: [message_pack, json]
-          default: message_pack
       responses:
         '200':
           description: The transaction found
           schema:
-            $ref: '#/definitions/SingleTxObject'
+            type: object
+            properties:
+              transaction:
+                $ref: '#/definitions/SignedTxJSON'
+            required:
+            - transaction
         '400':
           description: Invalid transaction
           schema:

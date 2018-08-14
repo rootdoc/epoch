@@ -1065,20 +1065,12 @@
           "description" : "Hash of the transaction to get",
           "required" : true,
           "type" : "string"
-        }, {
-          "name" : "tx_encoding",
-          "in" : "query",
-          "description" : "Transaction encoding",
-          "required" : false,
-          "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
         } ],
         "responses" : {
           "200" : {
             "description" : "The transaction found",
             "schema" : {
-              "$ref" : "#/definitions/SingleTxObject"
+              "$ref" : "#/definitions/inline_response_200_4"
             }
           },
           "400" : {
@@ -2837,7 +2829,7 @@
           "200" : {
             "description" : "The count of transactions in the block",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_4"
+              "$ref" : "#/definitions/inline_response_200_5"
             }
           },
           "400" : {
@@ -2884,7 +2876,7 @@
           "200" : {
             "description" : "The count of transactions in the block",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_4"
+              "$ref" : "#/definitions/inline_response_200_5"
             }
           },
           "404" : {
@@ -2919,7 +2911,7 @@
           "200" : {
             "description" : "The count of transactions in the genesis block",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_4"
+              "$ref" : "#/definitions/inline_response_200_5"
             }
           }
         }
@@ -2948,7 +2940,7 @@
           "200" : {
             "description" : "The count of transactions in the latest block",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_4"
+              "$ref" : "#/definitions/inline_response_200_5"
             }
           }
         }
@@ -2977,7 +2969,7 @@
           "200" : {
             "description" : "The count of transactions in the pending block",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_4"
+              "$ref" : "#/definitions/inline_response_200_5"
             }
           },
           "404" : {
@@ -3252,7 +3244,7 @@
           "200" : {
             "description" : "Node's peer public key",
             "schema" : {
-              "$ref" : "#/definitions/inline_response_200_5"
+              "$ref" : "#/definitions/inline_response_200_6"
             }
           },
           "404" : {
@@ -5694,6 +5686,26 @@
       }
     },
     "inline_response_200_4" : {
+      "required" : [ "transaction" ],
+      "properties" : {
+        "transaction" : {
+          "$ref" : "#/definitions/SignedTxJSON"
+        }
+      },
+      "example" : {
+        "transaction" : {
+          "tx" : {
+            "vsn" : 0,
+            "data_schema" : "data_schema"
+          },
+          "block_hash" : { },
+          "block_height" : 6,
+          "hash" : null,
+          "signatures" : [ "signatures", "signatures" ]
+        }
+      }
+    },
+    "inline_response_200_5" : {
       "properties" : {
         "count" : {
           "type" : "integer",
@@ -5704,7 +5716,7 @@
         "count" : 0
       }
     },
-    "inline_response_200_5" : {
+    "inline_response_200_6" : {
       "properties" : {
         "pubkey" : {
           "$ref" : "#/definitions/EncodedHash"

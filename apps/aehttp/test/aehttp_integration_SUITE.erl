@@ -2958,7 +2958,6 @@ get_transaction(_Config) ->
     aecore_suite_utils:mine_key_blocks(aecore_suite_utils:node_name(?NODE), 2),
     TxHashes = add_spend_txs(),
     aecore_suite_utils:mine_key_blocks(aecore_suite_utils:node_name(?NODE), 2),
-    Encodings = [default, message_pack, json],
     lists:foreach(
         fun(TxHash) ->
                 {ok, 200, #{<<"transaction">> := #{<<"hash">> := TxHash1}}} =
@@ -2983,17 +2982,9 @@ get_transaction(_Config) ->
 
     SerializedSpendTx = aetx_sign:serialize_to_binary(SignedSpendTx),
     {ok, 200, _} = post_tx(aec_base58c:encode(transaction, SerializedSpendTx)),
-    lists:foreach(
-        fun(Encoding) ->
-            {ok, 200, #{<<"transaction">> := PendingTx}} = get_tx(TxHash, Encoding),
-            E = case Encoding of
-                  default -> message_pack;
-                  E0 -> E0
-                end,
-            Expected = aetx_sign:serialize_for_client_pending(E, SignedSpendTx),
-            Expected = PendingTx
-        end,
-        Encodings),
+    {ok, 200, #{<<"transaction">> := PendingTx}} = get_tx(TxHash),
+    Expected = aetx_sign:serialize_for_client_pending(json, SignedSpendTx),
+    Expected = PendingTx,
 
     aecore_suite_utils:mine_key_blocks(aecore_suite_utils:node_name(?NODE), 2),
     ok.
@@ -5383,9 +5374,8 @@ get_transactions(EncodedPubKey) ->
 
 
 get_tx(TxHash, TxEncoding) ->
-    Params = tx_encoding_param(TxEncoding),
     Host = external_address(),
-    http_request(Host, get, "tx/" ++ binary_to_list(TxHash), Params).
+    http_request(Host, get, "tx/" ++ binary_to_list(TxHash), []).
 
 get_tx_nonce(TxHash) ->
     {ok, 200, Tx} = get_tx(TxHash, json),

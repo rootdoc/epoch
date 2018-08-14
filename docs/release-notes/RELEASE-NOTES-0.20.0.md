@@ -8,6 +8,7 @@ It:
 * Caps the gas operand of the `CALL` opcode in the VM with the available machine gas before performing the inner call. This impacts consensus.
 * Adds support for pruning contract calls in state channels. It is up to the
   channel participant when to do it.
+* Removes support for the MessagePack encoding in the response of the user HTTP API `/tx/{tx_hash}` - only JSON is supported. This also removes the now unused optional `tx_encoding` parameter.
 
 [this-release]: https://github.com/aeternity/epoch/releases/tag/v0.20.0
 
